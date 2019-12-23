@@ -1,0 +1,173 @@
+---
+title: "data_wrangling"
+author: "Robert Anarson"
+date: "18 mars 2019"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tableHTML)
+library(plotly)
+library(shiny)
+library(stringr)
+library(stringi)
+library(tidyr)
+library(data.table)
+library(plotly)
+library(zoo)
+library(maps)
+library(RColorBrewer)
+library(lubridate)
+```
+
+
+```{r}
+df <- read_csv("Hotel_Reviews.csv")
+df <- tbl_df(df)
+```
+
+# We see a presense of NA values within columns longitude and latitude. 
+```{r}
+length(df$lat[is.na(df$lat)])
+length(df$lng[is.na(df$lng)])
+
+df %>%
+  select(Reviewer_Nationality, Negative_Review, Positive_Review) %>%  
+  summarise_all(funs(sum(.== " ")))
+```
+
+```{r}
+na_df = filter(df, is.na(lat) | is.na(lng))
+count(na_df, na_df$Hotel_Address)
+```
+
+# NA Values are mostly present within the city list: Paris, Barcelona, Vienna
+## Let's replace observations that have NA lat and longitude values with the mean of longitude and latitude of the city that they are located in. 
+```{r}
+paris_data = as.data.frame(df %>% filter(!is.na(lat) | !is.na(lng)) %>% filter(str_detect(Hotel_Address, "Paris")))
+vienna_data = as.data.frame(df %>% filter(!is.na(lat) | !is.na(lng)) %>% filter(str_detect(Hotel_Address, "Vienna")))
+barcelona_data = as.data.frame(df %>% filter(!is.na(lat) | !is.na(lng)) %>% filter(str_detect(Hotel_Address, "Barcelona")))
+
+
+for (i in 1:length(df$lat)){
+  if (is.na(df$lat[i]) & str_detect(df$Hotel_Address[i], "Paris")) {
+    df$lat[i] = mean(paris_data$lat)
+  } 
+  if (is.na(df$lng[i]) & str_detect(df$Hotel_Address[i], "Paris")) {
+    df$lng[i] = mean(paris_data$lng)
+  }
+}
+
+
+for (i in 1:length(df$lat)){
+  if (is.na(df$lat[i]) & str_detect(df$Hotel_Address[i], "Barcelona")) {
+    df$lat[i] = mean(barcelona_data$lat)
+  } 
+  if (is.na(df$lng[i]) & str_detect(df$Hotel_Address[i], "Barcelona")) {
+    df$lng[i] = mean(barcelona_data$lng)
+  }
+}
+
+
+for (i in 1:length(df$lat)){
+  if (is.na(df$lat[i]) & str_detect(df$Hotel_Address[i], "Vienna")) {
+    df$lat[i] = mean(vienna_data$lat)
+  } 
+  if (is.na(df$lng[i]) & str_detect(df$Hotel_Address[i], "Vienna")) {
+    df$lng[i] = mean(vienna_data$lng)
+  }
+}
+
+mean(paris_data$lat)
+mean(paris_data$lng)
+
+summary(df$lat[str_detect(df$Hotel_Address, "Paris")])
+summary(df$lng[str_detect(df$Hotel_Address, "Paris")])
+```
+
+```{r}
+mean(vienna_data$lat)
+mean(vienna_data$lng)
+
+summary(df$lat[str_detect(df$Hotel_Address, "Vienna")])
+summary(df$lng[str_detect(df$Hotel_Address, "Vienna")])
+```
+
+```{r}
+#Fix dates and get a more specific columns for each time period 
+#df_original <- df
+df$new_tags <- df$Tags
+df$new_tags <- gsub("\\[|\\]", "", df$new_tags)
+df$new_tags <- gsub("'", '', df$new_tags)
+df$new_tags <- gsub(" ", '', df$new_tags)
+df$new_tags <- gsub("^(.*?),.*", "\\1", df$new_tags)
+
+#We add the second date column because we had some conflict in how we used our date columns, given more time we would have cleaned this up
+df$Review_Date_temp = mdy(df$Review_Date)
+
+df = mutate(df, month_temp = month(df$Review_Date_temp), year_temp = year(df$Review_Date_temp))
+
+
+df$month_year = as.factor(paste( df$year_temp,  df$month_temp, sep="-"))
+
+df$month_year = as.Date(as.yearmon(df$month_year))
+
+
+df$Review_Date <- as.Date(df$Review_Date, "%m/%d/%Y")
+df$year <- format(df$Review_Date, "%Y")
+df$month <- format(df$Review_Date, "%m")
+df$year_month <- format(df$Review_Date, "%Y/%m")
+
+min(df$Review_Date)
+max(df$Review_Date)
+
+#QUATERLY DATA
+df$quarter=as.yearqtr(as.Date( df$Review_Date, "%m/%d/%Y"))
+
+#Get the hotel countries
+df$hotel_country <- map.where(database="world", df$lng, df$lat)
+df$hotel_country[df$hotel_country == "UK:Great Britain"] <- "UK"
+```
+
+```{r}
+#Prepare the country names that need to be fixed in Reviewer_Nationality
+mitt_diff <- c('Abkhazia Georgia','Antigua Barbuda','Vatican City','United States of America','United Kingdom','Central Africa Republic','British Virgin Islands','Turks Caicos Islands','Falkland Islands Malvinas','Cocos K I','Cura ao','St Maarten','East Timor','U S Virgin Islands','Saint Vincent Grenadines','United States Minor Outlying Islands','Macau','Hong Kong','Palestinian Territory','St Pierre and Miquelon', 'Saint Barts')
+
+world_diff <- c('Georgia', 'Antigua', 'Vatican', 'USA', 'UK', 'Central African Republic', 'Virgin Islands', 'Turks and Caicos Islands', 'Falkland Islands', 'Cocos Islands', 'Curacao', 'Sint Maarten', 'Timor-Leste', 'Virgin Islands', 'Saint Vincent', 'USA', 'China', 'China', 'Palestine', 'Saint Pierre and Miquelon', 'Saint Barthelemy')
+```
+
+```{r}
+#Fix Reviewer_Nationality so that it can be correctly fitted with the world map
+for (i in 1:length(mitt_diff)) {
+  df$Reviewer_Nationality <- with(df, ifelse(Reviewer_Nationality == mitt_diff[i], as.character(world_diff[i]), as.character(Reviewer_Nationality)))
+}
+```
+
+```{r}
+#Find the total number of reviews for each country
+df <- add_count(df, Reviewer_Nationality)
+names(df)[names(df) == 'n'] <- 'nation_totcount'
+
+#Get a binary column that is 1 if the review is negative
+df$neg_review <- ifelse(df$Average_Score / df$Reviewer_Score > 2, 1, 0)
+
+#Get a binary column that is 1 if the review is positive
+df$pos_review <- ifelse(df$Average_Score / df$Reviewer_Score >= 2, 0, 1)
+
+#Get the total number of negative reviews for each country
+df <- df %>%
+  group_by(Reviewer_Nationality) %>%
+   mutate(sum(neg_review)) %>%
+  ungroup()
+names(df)[names(df) == 'sum(neg_review)'] <- 'nation_negcount'
+
+#Get the ratio of reviews that are negative in each country
+df$neg_ratio <- df$nation_negcount / df$nation_totcount
+```
+
+```{r}
+write.csv(df, file = "Hotel_Reviews_V2.csv")
+```

@@ -1,0 +1,324 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+```{r include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tableHTML)
+library(plotly)
+library(shiny)
+library(stringr)
+library(stringi)
+library(tidyr)
+library(data.table)
+library(plotly)
+library(zoo)
+library(maps)
+library(RColorBrewer)
+library(webshot)
+```
+
+
+```{r}
+df <- read_csv("Hotel_Reviews_V2.csv")
+df <- tbl_df(df)
+```
+
+##Code for exhibit 1
+```{r}
+# We create multiple sub dataframe to plot the world map, here we have filtered the countries by different minimum number of total review count from each nation
+
+#Original dataframe that includes all nations
+df_ratio <- distinct(df, Reviewer_Nationality, neg_ratio)
+
+#Filter countries that have under 25 reviews in total
+df2 <- df %>% 
+  mutate(neg_ratio = ifelse(nation_totcount <= 25, NA, neg_ratio))
+df2_ratio <- distinct(df2, Reviewer_Nationality, neg_ratio)
+
+#Filter countries that have under 200 reviews in total
+df3 <- df %>% 
+  mutate(neg_ratio = ifelse(nation_totcount <= 200, NA, neg_ratio))
+df3_ratio <- distinct(df3, Reviewer_Nationality, neg_ratio)
+
+#Combine the sub databases into a single database that includes all
+df_ratio_test <- df_ratio
+df_ratio_test$neg_ratio2 <- df2_ratio$neg_ratio
+df_ratio_test$neg_ratio3 <- df3_ratio$neg_ratio
+```
+
+```{r}
+#Load the world data to plot the map
+WorldData <- map_data('world')
+WorldData %>% filter(region != "Antarctica") -> WorldData
+WorldData <- fortify(WorldData)
+
+#Create the shiny server
+server <- shinyServer(function(input, output) {
+
+  output$mpgPlot <- renderPlot({
+    # Plot the world map with multiple layers and interactive database chosen
+      ggplot() +
+      geom_map(data = WorldData, map = WorldData,
+                        aes(x = long, y = lat, group = group, map_id = region),
+                        fill="#132B43", colour="#7f7f7f", size=0.5) +
+      
+      geom_map(data = df_ratio_test, map = WorldData,
+                        aes(fill = get(input$variable), map_id = Reviewer_Nationality),
+                        colour="#7f7f7f", size=0.5) +
+
+      coord_map("rectangular", lat0=0, xlim=c(-180,180), ylim=c(-60, 90)) +
+      scale_fill_continuous(low="thistle2", high="darkred", na.value="#132B43",
+                                     guide="colorbar") +
+      scale_y_continuous(breaks=c()) +
+      scale_x_continuous(breaks=c()) +
+      labs(fill=input$variable, title="", x="", y="") +
+      theme(panel.border = element_blank())
+      
+  })
+})
+
+#Create the user interface that we use in the shiny app
+ui <- shinyUI(pageWithSidebar(
+  headerPanel("Global Overview of Reviews"),
+  sidebarPanel(width = 3,
+    selectInput("variable", "Choose Database:",
+                list("No Minimum" = "neg_ratio", 
+                     "25 Minimum" = "neg_ratio2", 
+                     "200 Minimum" = "neg_ratio3"))
+  ),
+
+  mainPanel(
+
+    plotOutput("mpgPlot", width = "115%")
+  )
+))
+```
+
+
+```{r}
+#Run this chuck to run generate the user interface
+shinyApp(ui = ui, server = server)
+```
+
+##Code for exhibit 2
+```{r}
+#we group them by month and year and then we get the total positive and negative counts that will be used to calculate the percentage negative reviews for each countries
+query1 <- df %>% 
+  group_by(year_month) %>%
+  summarise(avg_hotel_score = mean(Average_Score),
+          avg_reviewer_score = mean(Reviewer_Score),
+          natoinality_count = length(unique(Reviewer_Nationality)),
+          number_of_hotel = length(unique(Hotel_Name)),
+          total_positive_count = sum(Review_Total_Positive_Word_Counts),
+          total_negative_count = sum(Review_Total_Negative_Word_Counts))
+```
+
+
+```{r}
+country_list <- df %>% distinct(hotel_country)
+for( country in country_list$hotel_country){
+  assign(paste("query", country, sep="_"), df %>% 
+    filter(df$hotel_country %in% country) %>% 
+
+    group_by(year_month) %>% 
+    summarise(neg_count = sum(neg_review),
+              pos_count = sum(pos_review)) %>%
+    ungroup())
+}
+
+#from this onwards, we calculate the percentage negative and postive review for each countries
+query_Austria$percentage_negative = query_Austria$neg_count/(query_Austria$neg_count + query_Austria$pos_count)
+query_Austria$percentage_positive = query_Austria$pos_count/(query_Austria$neg_count + query_Austria$pos_count)
+
+query_Netherlands$percentage_negative = query_Netherlands$neg_count/(query_Netherlands$neg_count + query_Netherlands$pos_count)
+query_Netherlands$percentage_positive = query_Netherlands$pos_count/(query_Netherlands$neg_count + query_Netherlands$pos_count)
+
+query_France$percentage_negative = query_France$neg_count/(query_France$neg_count + query_France$pos_count)
+query_France$percentage_positive = query_France$pos_count/(query_France$neg_count + query_France$pos_count)
+
+query_Italy$percentage_negative = query_Italy$neg_count/(query_Italy$neg_count + query_Italy$pos_count)
+query_Italy$percentage_positive = query_Italy$pos_count/(query_Italy$neg_count + query_Italy$pos_count)
+
+query_UK$percentage_negative = query_UK$neg_count/(query_UK$neg_count + query_UK$pos_count)
+query_UK$percentage_positive = query_UK$pos_count/(query_UK$neg_count + query_UK$pos_count)
+
+query_Spain$percentage_negative = query_Spain$neg_count/(query_Spain$neg_count + query_Spain$pos_count)
+query_Spain$percentage_positive = query_Spain$pos_count/(query_Spain$neg_count + query_Spain$pos_count)
+```
+
+```{r}
+p2 <- plot_ly(query1, x = ~year_month) %>%
+  add_lines(y = ~query_UK$percentage_negative, name = "UK Negative Words Total", yaxis = list(0.005, 1)) %>% 
+  add_lines(y = ~query_Austria$percentage_negative, name = "Austria Negative Words Total") %>% 
+  add_lines(y = ~query_France$percentage_negative, name = "France Negative Words Total") %>% 
+  add_lines(y = ~query_Italy$percentage_negative, name = "Italy Negative Words Total") %>% 
+  add_lines(y = ~query_Netherlands$percentage_negative, name = "Netherlands Negative Words Total") %>% 
+  add_lines(y = ~query_Spain$percentage_negative, name = "Spain Negative Words Total") %>% 
+  
+  add_lines(y = ~query_UK$percentage_positive, name = "UK Positive Words Total") %>% 
+  add_lines(y = ~query_Austria$percentage_positive, name = "Austria Positive Words Total") %>% 
+  add_lines(y = ~query_France$percentage_positive, name = "France Positive Words Total") %>% 
+  add_lines(y = ~query_Italy$percentage_positive, name = "Italy Positive Words Total") %>% 
+  add_lines(y = ~query_Netherlands$percentage_positive, name = "Netherlands Positive Words Total") %>% 
+  add_lines(y = ~query_Spain$percentage_positive, name = "Spain Positive Words Total") %>% 
+  
+  layout(
+    title = "Drop down menus - Styling",
+    xaxis = list(domain = c(0.1, 1)),
+    yaxis = list(title = "Negative or Positive Words"),
+    updatemenus = list(
+      list(
+        y = 0.7,
+        buttons = list(
+          list(method = "restyle",
+               args = list("visible", list(T, T, T, T, T, T, F, F, F, F, F, F)),
+               label = "All Countries Negative Percentage"),
+      
+          list(method = "restyle",
+               args = list("visible", list(F, F, F, F, F, F, T, T, T, T, T, T)),
+               label = "All Countries Positive Percentage")
+    )
+  )))
+
+p2
+```
+
+##Code for exhibit 3
+
+```{r}
+# Looking at the count of negative reviews given for each country by different nationalities during different years. 
+df_review_analysis = df %>% 
+  group_by(hotel_country, Reviewer_Nationality, month_year) %>%
+  summarize(total_neg_reviews = sum(neg_review), total_reviews = length(Hotel_Address))
+
+df_review_analysis = mutate(df_review_analysis, neg_ratio = total_neg_reviews/total_reviews)
+
+```
+
+
+```{r}
+# Looking at the total percentage of negative reviews  by country throughout years
+df_neg_reviews_by_hotel_country <- df_review_analysis %>% 
+  group_by(hotel_country, month_year) %>%
+  summarize(total_neg_reviews = sum(total_neg_reviews), total_reviews = sum(total_reviews) )
+
+df_neg_reviews_by_hotel_country = mutate(df_neg_reviews_by_hotel_country, neg_review_ratio = total_neg_reviews/total_reviews)
+
+
+ggplot(df_neg_reviews_by_hotel_country) + geom_line( mapping = aes(x = month_year, y = neg_review_ratio, color = hotel_country )) + 
+scale_x_date(limits = as.Date(c("2015-08-01","2017-08-01")), date_breaks = '4 month')
+
+df_neg_reviews_by_hotel_country = filter(df_neg_reviews_by_hotel_country, total_reviews >= 30)
+```
+
+```{r}
+# UK seems to be experiencing a seasonal rapid increase in  percentage of negative reviews around the season of Spring/Summer within 2016 and 2017.
+# Let's investigate. 
+ggplot(filter(df_neg_reviews_by_hotel_country, hotel_country == "UK")) + geom_line( mapping = aes(x = month_year, y = neg_review_ratio, color = hotel_country )) + 
+scale_x_date(limits = as.Date(c("2015-08-01","2017-08-01")), date_breaks = '4 month') +
+  ggtitle("UK Percentage of Negative Reviews Trend") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylab("Monthly percentage of negative reviews ")+
+  xlab("Month")
+```
+
+```{r}
+df_uk_review_analysis = filter(df_review_analysis, hotel_country == "UK")
+
+```
+
+```{r}
+# We will be only looking at nationalities that gave at least 30 reviews within one month for a specific hotel_country.
+df_uk_review_analysis = filter(df_uk_review_analysis, total_reviews >= 30)
+
+```
+
+
+```{r}
+# Looking at how the subset of nationailites rank other countries accross different years. 
+df_reviews_by_nationality = df %>% 
+  group_by(Reviewer_Nationality, month_year) %>%
+  summarize(total_neg_reviews = sum(neg_review), total_reviews = length(Hotel_Address))
+
+df_reviews_by_nationality = mutate(df_reviews_by_nationality, ratio_score_neg= total_neg_reviews/total_reviews)
+
+df_reviews_by_nationality$Reviewer_Nationality = stri_trim_both(df_reviews_by_nationality$Reviewer_Nationality)
+```
+
+```{r}
+# Select a subset of nationalities and how they rate various countries compared to a benchmark
+# Looking at the countries that gave the most negative reviews in 2016 from June to September. 
+uk_neg_review_2016_june = filter(df_uk_review_analysis, month_year == "2016-06-01") %>% arrange(desc(neg_ratio))
+
+uk_1 = uk_neg_review_2016_june[1:3, ]
+```
+
+
+```{r}
+uk_neg_review_2016_july = filter(df_uk_review_analysis, month_year == "2016-07-01") %>% arrange(desc(neg_ratio))
+
+uk_2 = uk_neg_review_2016_july[1:3, ]
+```
+
+```{r}
+uk_neg_review_2016_august = filter(df_uk_review_analysis, month_year == "2016-08-01") %>% arrange(desc(neg_ratio))
+
+uk_3 = uk_neg_review_2016_august[1:3, ]
+```
+
+```{r}
+uk_neg_review_2016_sept = filter(df_uk_review_analysis, month_year == "2016-09-01") %>% arrange(desc(neg_ratio))
+
+uk_4 = uk_neg_review_2016_sept[1:3, ]
+```
+
+```{r}
+# April to July 2017
+uk_neg_review_2017_april = filter(df_uk_review_analysis, month_year == "2017-04-01") %>% arrange(desc(neg_ratio))
+
+uk_6 = uk_neg_review_2017_april[1:3, ]
+
+
+uk_neg_review_2017_may = filter(df_uk_review_analysis, month_year == "2017-05-01") %>% arrange(desc(neg_ratio))
+
+uk_7 = uk_neg_review_2017_may[1:3, ]
+
+
+uk_neg_review_2017_june = filter(df_uk_review_analysis, month_year == "2017-06-01") %>% arrange(desc(neg_ratio))
+
+uk_8 = uk_neg_review_2017_june[1:3, ]
+
+
+uk_neg_review_2017_july = filter(df_uk_review_analysis, month_year == "2017-07-01") %>% arrange(desc(neg_ratio))
+
+uk_9 = uk_neg_review_2017_july[1:3, ]
+
+```
+
+```{r}
+# Binding the data above 
+uk_top5_monthly_neg_analysis_p1 = rbind(uk_1, uk_2, uk_3, uk_4)
+uk_top5_monthly_neg_analysis_p2 = rbind(uk_6, uk_7, uk_8, uk_9)
+
+uk_top5 = rbind(uk_top5_monthly_neg_analysis_p1, uk_top5_monthly_neg_analysis_p2)
+```
+
+
+```{r}
+#Plotting the bar chart to visualise the trend between countries
+colourCount = length(unique(uk_top5$Reviewer_Nationality))
+getPalette = colorRampPalette(brewer.pal(colourCount, "Set1"))
+
+ggplot(uk_top5, aes(x=month_year, y= neg_ratio, fill= Reviewer_Nationality)) + 
+geom_bar(stat="identity", position="dodge") + 
+  scale_fill_manual(values = getPalette(colourCount))  +
+  ggtitle("Top 3 countries with highest percentage of negative reviews") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylab("Monthly Percentage of Negative Reviews ")+
+  xlab("Month")
+```
